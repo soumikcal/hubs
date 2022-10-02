@@ -58,8 +58,9 @@ AFRAME.registerComponent("in-world-hud", {
       this.el.emit("action_invite");
     };
 
+    this.inviteBtn.object3D.visible = false;
     this.onHubUpdated = e => {
-      this.inviteBtn.object3D.visible = e.detail.hub.entry_mode !== "invite";
+      this.inviteBtn.object3D.visible = false;
     };
   },
 
