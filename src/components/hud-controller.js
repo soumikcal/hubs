@@ -1,9 +1,79 @@
 import { CAMERA_MODE_FIRST_PERSON } from "../systems/camera-system";
+import { setMatrixWorld } from "../utils/three-utils";
 const TWOPI = Math.PI * 2;
 function deltaAngle(a, b) {
   const p = Math.abs(b - a) % TWOPI;
   return p > Math.PI ? TWOPI - p : p;
 }
+
+const getDesiredTransform = (() => {
+  const p1 = new THREE.Vector3();
+  const q1 = new THREE.Quaternion();
+  const s1 = new THREE.Vector3();
+
+  const p2 = new THREE.Vector3();
+  const q2 = new THREE.Quaternion();
+  const s2 = new THREE.Vector3();
+
+  const p3 = new THREE.Vector3();
+  const q3 = new THREE.Quaternion();
+  const s3 = new THREE.Vector3();
+
+  const v1 = new THREE.Vector3();
+  const v2 = new THREE.Vector3();
+  const v3 = new THREE.Vector3();
+
+  const m = new THREE.Matrix4();
+  const m2 = new THREE.Matrix4();
+
+  const UP = new THREE.Vector3(0, 1, 0);
+  const DOWN = new THREE.Vector3(0, -1, 0);
+
+  const CUTOFF = Math.cos(Math.PI / 4);
+
+  return function getDesiredTransform(head, hud) {
+    head.updateMatrices();
+    head.matrixWorld.decompose(p1, q1, s1);
+
+    hud.updateMatrices();
+    hud.matrixWorld.decompose(p2, q2, s2);
+
+    // Calculate current direction
+    p1.y = 0;
+    p2.y = 0;
+    v1.subVectors(p2, p1).normalize();
+
+    // Calculate look direction
+    v2.set(0, 0, -1).applyQuaternion(q1);
+    v2.y = 0;
+    v2.normalize();
+
+    // Lerp towards look dir
+    v3.lerpVectors(v1, v2, 0.1).normalize();
+
+    // Compose the matrix appropriately
+    // Decompose again to get p1 back. (Yes, this is a silly / expensive thing to do.)
+    head.matrixWorld.decompose(p1, q1, s1);
+    v3.multiplyScalar(1); // How far in front of you
+    p3.addVectors(p1, v3);
+    p3.y = p3.y - 1.4; // How far below you.
+
+    m.identity().lookAt(p1, p3, UP);
+    q3.setFromRotationMatrix(m);
+
+    s3.setScalar(0.5); // How big?
+
+    // If the look direction isn't downward enough, hide the menu.
+    v2.set(0, 0, -1).applyQuaternion(q1);
+    if (v2.dot(DOWN) < CUTOFF) {
+      p3.y = p3.y - 1000;
+    }
+
+    m2.compose(p3, q3, s3);
+
+    return m2;
+  };
+})();
 
 /**
  * Positions the HUD and toggles app mode based on where the user is looking
@@ -33,55 +103,7 @@ AFRAME.registerComponent("hud-controller", {
     const hud = this.el.object3D;
     const head = this.data.head.object3DMap.camera;
 
-    const { offset, lookCutoff, animRange, yawCutoff } = this.data;
-
-    const pitch = head.rotation.x * THREE.MathUtils.RAD2DEG;
-    const yawDif = deltaAngle(head.rotation.y, hud.rotation.y) * THREE.MathUtils.RAD2DEG;
-
-    // HUD is always visible until first hover, to increase discoverability.
-    const forceHudVisible = !this.store.state.activity.hasHoveredInWorldHud;
-
-    // animate the hud into place over animRange degrees as the user aproaches the lookCutoff angle
-    let t = 1 - THREE.MathUtils.clamp(lookCutoff - pitch, 0, animRange) / animRange;
-
-    // HUD is locked down while showing tooltip or if forced.
-    if (forceHudVisible) {
-      t = 1;
-    }
-
-    // Once the HUD is in place it should stay in place until you look sufficiently far down
-    if (t === 1) {
-      this.lockedHeadPositionY = head.position.y;
-      this.hudLocked = true;
-    } else if (this.hudLocked && pitch < lookCutoff - animRange / 2) {
-      this.hudLocked = false;
-    }
-
-    if (this.hudLocked) {
-      t = 1;
-    }
-
-    // Reorient the hud only if the user is looking away from the hud, for right now this arbitrarily means the hud is 1/2 way animated away
-    // TODO: come up with better huristics for this that maybe account for the user turning away from the hud "too far", also animate the position so that it doesnt just snap.
-    const hudOutOfView = yawDif >= yawCutoff || pitch < lookCutoff - animRange / 2;
-
-    if (hudOutOfView) {
-      this.lookDir.set(0, 0, -1);
-      this.lookDir.applyQuaternion(head.quaternion);
-      this.lookDir.add(head.position);
-      hud.position.x = this.lookDir.x;
-      hud.position.z = this.lookDir.z;
-      hud.rotation.copy(head.rotation);
-      hud.rotation.x = 0;
-      hud.rotation.z = 0;
-    }
-
-    hud.visible =
-      (!hudOutOfView || forceHudVisible) &&
-      this.el.sceneEl.systems["hubs-systems"].cameraSystem.mode === CAMERA_MODE_FIRST_PERSON;
-    hud.position.y = (this.isYLocked ? this.lockedHeadPositionY : head.position.y) + offset + (1 - t) * offset;
-    hud.rotation.x = (1 - t) * THREE.MathUtils.DEG2RAD * 90;
-    hud.matrixNeedsUpdate = true;
+    setMatrixWorld(hud, getDesiredTransform(head, hud));
   },
 
   play() {
